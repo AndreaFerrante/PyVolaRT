@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* shadcn/ui tokens — dark theme tuned to the reference mockup */
+    --background: 222 33% 6%;
+    --foreground: 220 20% 92%;
+    --card: 222 28% 9%;
+    --card-foreground: 220 20% 92%;
+    --popover: 222 28% 9%;
+    --popover-foreground: 220 20% 92%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 222 20% 16%;
+    --secondary-foreground: 220 20% 92%;
+    --muted: 222 18% 15%;
+    --muted-foreground: 220 12% 64%;
+    --accent: 222 20% 18%;
+    --accent-foreground: 220 20% 92%;
+    --destructive: 351 89% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 222 18% 18%;
+    --input: 222 18% 18%;
+    --ring: 217 91% 60%;
+    --radius: 0.6rem;
+
+    /* Semantic plain-color tokens consumed by SCSS modules (charts use the
+       constants in src/lib/constants.ts so SVG fills resolve reliably). */
+    --c-bg: hsl(222 33% 5%);
+    --c-card: hsl(222 28% 9%);
+    --c-card-2: hsl(222 24% 12%);
+    --c-border: hsl(222 18% 18%);
+    --c-text: hsl(220 20% 92%);
+    --c-muted: hsl(220 12% 64%);
+    --c-up: #22c55e;
+    --c-down: #f43f5e;
+    --c-info: #3b82f6;
+    --c-spot: #3b82f6;
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
