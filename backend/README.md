@@ -48,6 +48,7 @@ file. See `.env.example`. Common ones:
 
 - `GEX_DATABASE_URL` — SQLite by default; Postgres via
   `postgresql+asyncpg://user:pass@host:5432/gex`
+- `GEX_HISTORY_RETENTION_DAYS` — snapshots older than this are pruned hourly (default 7)
 - `GEX_UNDERLYING`, `GEX_STRIKE_SPACING`, `GEX_NTM_STRIKES_EACH_SIDE`
 - `GEX_RECOMPUTE_INTERVAL_S`, `GEX_HEARTBEAT_INTERVAL_S`
 - `GEX_CORS_ORIGINS` — JSON list, e.g. `["http://localhost:5173"]`

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.models.gex import GexSnapshot
@@ -46,12 +46,21 @@ class Repository:
                 GexSnapshotRow.ts_epoch >= start.timestamp(),
                 GexSnapshotRow.ts_epoch <= end.timestamp(),
             )
-            .order_by(GexSnapshotRow.ts_epoch.asc())
+            # newest first so `limit` keeps the most recent rows, not the oldest
+            .order_by(GexSnapshotRow.ts_epoch.desc())
+            .limit(limit * step)
         )
         async with self._sessionmaker() as session:
             rows = (await session.execute(stmt)).scalars().all()
 
-        if step > 1:
-            rows = rows[::step]
-        rows = rows[:limit]
-        return [GexSnapshot.model_validate(row.payload) for row in rows]
+        # stride from the newest row, then back to chronological order
+        return [GexSnapshot.model_validate(row.payload) for row in rows[::step][::-1]]
+
+    async def prune(self, older_than: datetime) -> int:
+        """Delete snapshots older than the cutoff. Returns rows deleted."""
+        async with self._sessionmaker() as session:
+            result = await session.execute(
+                delete(GexSnapshotRow).where(GexSnapshotRow.ts_epoch < older_than.timestamp())
+            )
+            await session.commit()
+            return result.rowcount

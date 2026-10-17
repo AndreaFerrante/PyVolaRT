@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     # Postgres: GEX_DATABASE_URL=postgresql+asyncpg://user:pass@host/db
     database_url: str = "sqlite+aiosqlite:///./gex.db"
     history_default_hours: int = 6
+    history_retention_days: float = 7.0   # older snapshots are pruned hourly
 
     # --- CORS ---
     # The React dev server runs on a different origin. "*" is fine for a local

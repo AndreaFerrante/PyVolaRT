@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from app.config import Settings
@@ -23,7 +23,7 @@ from app.core.models.envelope import (
 from app.core.models.gex import FlipCurve, GexSnapshot
 from app.core.models.quality import DataQuality, FeedStatus
 from app.core.util import utcnow
-from app.services.gex.engine import EngineInputs, GexEngine
+from app.services.gex.engine import GexEngine
 from app.services.gex.flip import compute_flip_curve
 from app.services.hub import Hub
 from app.services.providers.base import MarketDataProvider
@@ -67,6 +67,7 @@ class Pipeline:
         self._tasks = [
             asyncio.create_task(self._recompute_loop()),
             asyncio.create_task(self._heartbeat_loop()),
+            asyncio.create_task(self._retention_loop()),
         ]
         log.info("pipeline started run_id=%s provider=%s", self.run_id, self.config.provider)
 
@@ -82,26 +83,37 @@ class Pipeline:
     async def _recompute_loop(self) -> None:
         while self._running:
             await asyncio.sleep(self.config.recompute_interval_s)
-            if self.state.consume_dirty():
-                try:
+            try:
+                if self.state.consume_dirty():
                     await self._recompute_once()
-                except Exception:  # never let one bad cycle kill the loop
-                    log.exception("recompute cycle failed")
+                else:
+                    # A silent feed sets no dirty bit, so quality must still be
+                    # re-derived every tick or STALE/DISCONNECTED never fires.
+                    self._refresh_quality(utcnow())
+            except Exception:  # never let one bad cycle kill the loop
+                log.exception("recompute cycle failed")
 
     async def _heartbeat_loop(self) -> None:
         while self._running:
             await asyncio.sleep(self.config.heartbeat_interval_s)
             self.hub.publish(HeartbeatMsg(data=utcnow()))
 
+    async def _retention_loop(self) -> None:
+        while self._running:
+            try:
+                cutoff = utcnow() - timedelta(days=self.config.history_retention_days)
+                pruned = await self.repository.prune(cutoff)
+                if pruned:
+                    log.info("pruned %d snapshots older than %s", pruned, cutoff.isoformat())
+            except Exception:
+                log.exception("history prune failed")
+            await asyncio.sleep(3600)
+
     # --- one cycle ---------------------------------------------------------
     async def _recompute_once(self) -> None:
         now = utcnow()
         inputs = self.state.snapshot_inputs(now, self.config.risk_free_rate)
-        quality = self._build_quality(now, inputs)
-
-        # Always surface quality changes, even when we cannot compute GEX yet.
-        self.latest_quality = quality
-        self._publish_quality_if_changed(quality)
+        quality = self._refresh_quality(now)
 
         if inputs.spot is None or inputs.spot <= 0 or not inputs.contracts:
             return
@@ -117,7 +129,17 @@ class Pipeline:
         await self.repository.save_snapshot(snapshot, run_id=self.run_id)
 
     # --- quality -----------------------------------------------------------
-    def _build_quality(self, now: datetime, inputs: EngineInputs) -> DataQuality:
+    def _refresh_quality(self, now: datetime) -> DataQuality:
+        """Re-derive quality, publish status changes, and keep the served
+        snapshot's embedded quality current (/gex/current and /gex/levels)."""
+        quality = self._build_quality(now)
+        self.latest_quality = quality
+        self._publish_quality_if_changed(quality)
+        if self.latest_snapshot is not None:
+            self.latest_snapshot = self.latest_snapshot.model_copy(update={"quality": quality})
+        return quality
+
+    def _build_quality(self, now: datetime) -> DataQuality:
         health = self.provider.health()
         spot_age = self.state.spot_age_s(now)
         total = self.state.contract_count()
