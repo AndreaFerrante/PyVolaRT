@@ -61,8 +61,12 @@ class MarketState:
     def contract_count(self) -> int:
         return len(self._contracts)
 
-    def fresh_greeks_count(self) -> int:
-        return sum(1 for g in self._greeks.values() if g.gamma is not None)
+    def fresh_greeks_count(self, now: datetime, max_age_s: float) -> int:
+        return sum(
+            1
+            for g in self._greeks.values()
+            if g.gamma is not None and (now - g.ts).total_seconds() <= max_age_s
+        )
 
     def snapshot_inputs(self, now: datetime, rate: float) -> EngineInputs:
         """Consistent copy of inputs for one compute cycle."""

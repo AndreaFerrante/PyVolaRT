@@ -143,7 +143,8 @@ class Pipeline:
         health = self.provider.health()
         spot_age = self.state.spot_age_s(now)
         total = self.state.contract_count()
-        coverage = (self.state.fresh_greeks_count() / total) if total else 0.0
+        fresh = self.state.fresh_greeks_count(now, self.config.spot_sla_s)
+        coverage = (fresh / total) if total else 0.0
         status = self._derive_status(health.connected, spot_age, coverage)
         return DataQuality(
             status=status,

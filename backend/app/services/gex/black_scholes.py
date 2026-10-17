@@ -7,8 +7,24 @@ the logic obvious.
 from __future__ import annotations
 
 import math
+from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 
 _INV_SQRT_2PI = 1.0 / math.sqrt(2.0 * math.pi)
+
+_EXPIRY_CLOSE = time(16, 0, tzinfo=ZoneInfo("America/New_York"))
+_SECONDS_PER_YEAR = 365.0 * 24 * 3600
+_MIN_T_YEARS = 15 * 60 / _SECONDS_PER_YEAR  # floor so gamma stays finite at/after the close
+
+
+def year_fraction(expiry: date, now: datetime) -> float:
+    """Calendar time from ``now`` (aware) to the 16:00 New York close on ``expiry``.
+
+    shortcut: assumes PM settlement (SPXW); AM-settled SPX monthlies stop
+    trading the day before, so their T is overstated by up to a day.
+    """
+    seconds = (datetime.combine(expiry, _EXPIRY_CLOSE) - now).total_seconds()
+    return max(seconds / _SECONDS_PER_YEAR, _MIN_T_YEARS)
 
 
 def norm_pdf(x: float) -> float:

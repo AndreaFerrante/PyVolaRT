@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import make_url
 
 from app.api.v1.router import router as api_router
 from app.config import Settings
@@ -87,7 +88,7 @@ async def lifespan(app: FastAPI):
         settings.app_name,
         settings.provider,
         settings.underlying,
-        settings.database_url,
+        make_url(settings.database_url).render_as_string(hide_password=True),
     )
     try:
         yield

@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import math
 import random
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from app.config import Settings
 from app.core.models.contracts import OptionContract, OptionRight
@@ -26,7 +26,7 @@ from app.core.models.market import (
     UnderlyingQuote,
 )
 from app.core.util import utcnow
-from app.services.gex.black_scholes import bs_gamma
+from app.services.gex.black_scholes import bs_gamma, year_fraction
 from app.services.providers.base import MarketDataProvider, MarketSink, ProviderHealth
 
 
@@ -107,8 +107,8 @@ class SimulatedProvider(MarketDataProvider):
         return int(base + bump)
 
     # --- emission ----------------------------------------------------------
-    def _greek_for(self, contract: OptionContract, spot: float) -> tuple[float, float]:
-        t = max((contract.expiry - date.today()).days, 0) / 365.0 or (0.5 / 365.0)
+    def _greek_for(self, contract: OptionContract, spot: float, now: datetime) -> tuple[float, float]:
+        t = year_fraction(contract.expiry, now)
         iv = self._s.sim_base_iv + 0.04 * abs(contract.strike - spot) / spot  # simple smile
         gamma = bs_gamma(spot, contract.strike, t, self._s.risk_free_rate, iv)
         return gamma, iv
@@ -125,7 +125,7 @@ class SimulatedProvider(MarketDataProvider):
             )
         )
         for contract in self._contracts:
-            gamma, iv = self._greek_for(contract, self._spot)
+            gamma, iv = self._greek_for(contract, self._spot, now)
             self._sink.on_greeks(
                 GreeksUpdate(
                     con_id=contract.con_id,

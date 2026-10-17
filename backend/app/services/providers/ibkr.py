@@ -63,8 +63,9 @@ class IBKRProvider(MarketDataProvider):
         underlying = await self._qualify_underlying()
         und_ticker = self._ib.reqMktData(underlying, "", False, False)
         und_ticker.updateEvent += self._on_underlying
+        spot = await self._await_spot(und_ticker)
 
-        contracts = await self._discover_ntm(underlying)
+        contracts = await self._discover_ntm(underlying, spot)
         self._assert_budget(len(contracts))
 
         for contract, ib_opt in contracts:
@@ -96,7 +97,7 @@ class IBKRProvider(MarketDataProvider):
         (qualified,) = await self._ib.qualifyContractsAsync(index)
         return qualified
 
-    async def _discover_ntm(self, underlying) -> list[tuple[OptionContract, object]]:
+    async def _discover_ntm(self, underlying, spot: float) -> list[tuple[OptionContract, object]]:
         """Front expiry, NTM +/- N strikes, both rights. Returns (model, ib_contract)."""
         params = await self._ib.reqSecDefOptParamsAsync(
             underlying.symbol, "", underlying.secType, underlying.conId
@@ -104,7 +105,6 @@ class IBKRProvider(MarketDataProvider):
         chain = next((p for p in params if p.exchange == "SMART"), params[0])
         expiry = sorted(chain.expirations)[0]
 
-        spot = await self._await_spot(underlying)
         n, spacing = self._s.ntm_strikes_each_side, self._s.strike_spacing
         center = round(spot / spacing) * spacing
         wanted = {center + i * spacing for i in range(-n, n + 1)}
@@ -135,17 +135,23 @@ class IBKRProvider(MarketDataProvider):
             )
         return out
 
-    async def _await_spot(self, underlying, timeout: float = 5.0) -> float:
-        ticker = self._ib.reqMktData(underlying, "", False, False)
-        deadline = asyncio.get_event_loop().time() + timeout
-        while asyncio.get_event_loop().time() < deadline:
+    async def _await_spot(self, ticker: "Ticker", timeout: float = 5.0) -> float:
+        """First valid price from the already-subscribed underlying ticker.
+
+        Raises instead of guessing: a wrong spot centers the NTM window on the
+        wrong strikes and every downstream number is silently garbage.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
             price = ticker.marketPrice()
             if price and price == price:  # not NaN
-                self._ib.cancelMktData(underlying)
                 return float(price)
             await asyncio.sleep(0.2)
-        self._ib.cancelMktData(underlying)
-        return float(self._s.sim_initial_spot)  # last-resort fallback for window centering
+        raise RuntimeError(
+            f"no {self._s.underlying} price within {timeout}s; "
+            "check the index market-data subscription in IB Gateway/TWS"
+        )
 
     def _assert_budget(self, n_options: int) -> None:
         needed = n_options + 1  # + underlying
