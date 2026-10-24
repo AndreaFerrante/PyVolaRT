@@ -31,6 +31,15 @@ def norm_pdf(x: float) -> float:
     return _INV_SQRT_2PI * math.exp(-0.5 * x * x)
 
 
+def bs_delta(spot: float, strike: float, t_years: float, rate: float, sigma: float, is_call: bool) -> float:
+    """Black-Scholes delta (calls 0..1, puts -1..0). Returns 0.0 for degenerate inputs."""
+    if spot <= 0 or strike <= 0 or t_years <= 0 or sigma <= 0:
+        return 0.0
+    d1 = (math.log(spot / strike) + (rate + 0.5 * sigma * sigma) * t_years) / (sigma * math.sqrt(t_years))
+    call_delta = 0.5 * (1.0 + math.erf(d1 / math.sqrt(2.0)))
+    return call_delta if is_call else call_delta - 1.0
+
+
 def bs_gamma(spot: float, strike: float, t_years: float, rate: float, sigma: float) -> float:
     """Black-Scholes gamma. Returns 0.0 for degenerate inputs rather than raising.
 

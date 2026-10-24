@@ -21,7 +21,8 @@ when ib_async is not installed.
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+import logging
+from datetime import date, timedelta
 
 from app.config import Settings
 from app.core.models.contracts import OptionContract, OptionRight
@@ -36,9 +37,11 @@ from app.core.util import utcnow
 from app.services.providers.base import MarketDataProvider, MarketSink, ProviderHealth
 
 try:  # ib_async is optional; only required when provider == "ibkr"
-    from ib_async import IB, Index, Option, Ticker
+    from ib_async import IB, Future, Index, Option, Ticker
 except Exception:  # pragma: no cover - import guard
     IB = None  # type: ignore[assignment]
+
+log = logging.getLogger("gex.ibkr")
 
 
 class IBKRProvider(MarketDataProvider):
@@ -55,18 +58,32 @@ class IBKRProvider(MarketDataProvider):
         self._connected = False
 
     async def start(self) -> None:
-        await self._ib.connectAsync(
-            self._s.ibkr_host, self._s.ibkr_port, clientId=self._s.ibkr_client_id
-        )
+        try:
+            await self._ib.connectAsync(
+                self._s.ibkr_host, self._s.ibkr_port, clientId=self._s.ibkr_client_id
+            )
+        except (ConnectionRefusedError, OSError, asyncio.TimeoutError) as e:
+            raise RuntimeError(
+                f"cannot reach TWS/Gateway at {self._s.ibkr_host}:{self._s.ibkr_port}. "
+                "Start TWS, enable Global Configuration > API > Settings > "
+                "'Enable ActiveX and Socket Clients', and match GEX_IBKR_PORT "
+                "(TWS paper 7497, Gateway paper 4002)."
+            ) from e
         self._connected = True
 
         underlying = await self._qualify_underlying()
         und_ticker = self._ib.reqMktData(underlying, "", False, False)
-        und_ticker.updateEvent += self._on_underlying
+        und_ticker.updateEvent += self._make_quote_handler(self._s.underlying)
         spot = await self._await_spot(und_ticker)
 
         contracts = await self._discover_ntm(underlying, spot)
         self._assert_budget(len(contracts))
+
+        es = await self._qualify_es()
+        if es is not None:
+            es_ticker = self._ib.reqMktData(es, "", False, False)
+            es_ticker.updateEvent += self._make_quote_handler("ES")
+            self._tickers[es.conId] = es_ticker  # counted in health(), cancelled in stop()
 
         for contract, ib_opt in contracts:
             self._sink.register_contract(contract)
@@ -97,13 +114,33 @@ class IBKRProvider(MarketDataProvider):
         (qualified,) = await self._ib.qualifyContractsAsync(index)
         return qualified
 
+    async def _qualify_es(self):
+        """The ES future most traders hold: nearest expiry more than 8 days out.
+
+        shortcut: 8 days approximates the CME roll date; during roll week check
+        that TWS shows the same contract. Returns None (basis shows N/A) rather
+        than failing GEX when ES is unavailable.
+        """
+        details = await self._ib.reqContractDetailsAsync(Future("ES", exchange="CME"))
+        cutoff = (date.today() + timedelta(days=8)).strftime("%Y%m%d")
+        futures = sorted(
+            (d.contract for d in details if d.contract.lastTradeDateOrContractMonth[:8] > cutoff),
+            key=lambda c: c.lastTradeDateOrContractMonth,
+        )
+        if not futures:
+            log.warning("no ES future found; ES basis disabled (check CME permissions)")
+            return None
+        return futures[0]
+
     async def _discover_ntm(self, underlying, spot: float) -> list[tuple[OptionContract, object]]:
         """Front expiry, NTM +/- N strikes, both rights. Returns (model, ib_contract)."""
         params = await self._ib.reqSecDefOptParamsAsync(
             underlying.symbol, "", underlying.secType, underlying.conId
         )
-        chain = next((p for p in params if p.exchange == "SMART"), params[0])
-        expiry = sorted(chain.expirations)[0]
+        # SPX has two SMART chains (SPX monthlies, SPXW dailies); the front expiry lives in SPXW
+        smart = [p for p in params if p.exchange == "SMART"] or params
+        chain = min(smart, key=lambda p: min(p.expirations))
+        expiry = min(chain.expirations)
 
         n, spacing = self._s.ntm_strikes_each_side, self._s.strike_spacing
         center = round(spot / spacing) * spacing
@@ -119,6 +156,8 @@ class IBKRProvider(MarketDataProvider):
 
         out: list[tuple[OptionContract, object]] = []
         for ib_opt in qualified:
+            if ib_opt is None:
+                continue  # strike not listed for this expiry; ib_async already logged it
             out.append(
                 (
                     OptionContract(
@@ -150,11 +189,12 @@ class IBKRProvider(MarketDataProvider):
             await asyncio.sleep(0.2)
         raise RuntimeError(
             f"no {self._s.underlying} price within {timeout}s; "
-            "check the index market-data subscription in IB Gateway/TWS"
+            "check the CBOE index market-data subscription; a paper account also needs "
+            "'share real-time market data' enabled from the live account in Client Portal"
         )
 
     def _assert_budget(self, n_options: int) -> None:
-        needed = n_options + 1  # + underlying
+        needed = n_options + 2  # + underlying + ES future
         budget = self._s.line_cap - self._s.line_reserve
         if needed > budget:
             raise RuntimeError(
@@ -164,16 +204,19 @@ class IBKRProvider(MarketDataProvider):
             )
 
     # --- tick handlers -----------------------------------------------------
-    def _on_underlying(self, ticker: "Ticker") -> None:
-        self._sink.on_quote(
-            UnderlyingQuote(
-                symbol=self._s.underlying,
-                ts=utcnow(),
-                last=ticker.last,
-                bid=ticker.bid,
-                ask=ticker.ask,
+    def _make_quote_handler(self, symbol: str):
+        def handler(ticker: "Ticker") -> None:
+            self._sink.on_quote(
+                UnderlyingQuote(
+                    symbol=symbol,
+                    ts=utcnow(),
+                    last=ticker.last,
+                    bid=ticker.bid,
+                    ask=ticker.ask,
+                )
             )
-        )
+
+        return handler
 
     def _make_option_handler(self, contract: OptionContract):
         def handler(ticker: "Ticker") -> None:

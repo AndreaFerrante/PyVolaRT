@@ -30,6 +30,18 @@ export function fmtSignedPct(n: number | null, digits = 2): string {
   return `${sign}${n.toFixed(digits)}%`;
 }
 
+/** Signed points: +35.25, N/A when unknown. */
+export function fmtSignedPts(n: number | null): string {
+  if (n === null) return "N/A";
+  return `${n >= 0 ? "+" : ""}${n.toFixed(2)}`;
+}
+
+/** SPX level shifted to ES, rounded to the 0.25 ES tick: 6110.25, N/A when unknown. */
+export function fmtEsLevel(level: number | null, basis: number | null): string {
+  if (level === null || basis === null) return "N/A";
+  return (Math.round((level + basis) * 4) / 4).toFixed(2);
+}
+
 /** Ratio: 0.41, — when unknown. */
 export function fmtRatio(n: number | null, digits = 2): string {
   return n === null ? "—" : n.toFixed(digits);

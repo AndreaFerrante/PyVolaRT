@@ -37,7 +37,8 @@ class Settings(BaseSettings):
     # --- universe / windowing ---
     underlying: str = "SPX"
     strike_spacing: float = 5.0
-    ntm_strikes_each_side: int = 30
+    # 22 -> 45 strikes x 2 rights = 90 lines, + SPX + ES = 92 <= cap - reserve (95)
+    ntm_strikes_each_side: int = 22
 
     # --- line budget (PLAN D8) ---
     line_cap: int = 100
@@ -61,10 +62,11 @@ class Settings(BaseSettings):
     sim_base_iv: float = 0.18
     sim_tick_interval_s: float = 1.0
     sim_expiry_days: int = 7
+    sim_es_basis: float = 35.0
 
     # --- IBKR provider ---
     ibkr_host: str = "127.0.0.1"
-    ibkr_port: int = 4001
+    ibkr_port: int = 7497  # TWS paper. TWS live 7496, Gateway paper 4002, Gateway live 4001
     ibkr_client_id: int = 11
 
     def config_hash(self) -> str:

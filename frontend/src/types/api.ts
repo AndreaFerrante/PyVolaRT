@@ -58,6 +58,8 @@ export interface GexSnapshot {
   call_gex_total: number; // >= 0
   put_gex_total: number; // <= 0
   gex_ratio: number | null;
+  net_dex: number; // USD delta of OI, calls +, puts -
+  es_basis: number | null; // ES - SPX in points; null when no fresh ES quote
 
   call_oi_total: number;
   put_oi_total: number;

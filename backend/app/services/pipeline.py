@@ -112,7 +112,7 @@ class Pipeline:
     # --- one cycle ---------------------------------------------------------
     async def _recompute_once(self) -> None:
         now = utcnow()
-        inputs = self.state.snapshot_inputs(now, self.config.risk_free_rate)
+        inputs = self.state.snapshot_inputs(now, self.config.risk_free_rate, self.config.spot_sla_s)
         quality = self._refresh_quality(now)
 
         if inputs.spot is None or inputs.spot <= 0 or not inputs.contracts:

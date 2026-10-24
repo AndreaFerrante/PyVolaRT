@@ -26,7 +26,7 @@ from app.core.models.market import (
     UnderlyingQuote,
 )
 from app.core.util import utcnow
-from app.services.gex.black_scholes import bs_gamma, year_fraction
+from app.services.gex.black_scholes import bs_delta, bs_gamma, year_fraction
 from app.services.providers.base import MarketDataProvider, MarketSink, ProviderHealth
 
 
@@ -107,11 +107,14 @@ class SimulatedProvider(MarketDataProvider):
         return int(base + bump)
 
     # --- emission ----------------------------------------------------------
-    def _greek_for(self, contract: OptionContract, spot: float, now: datetime) -> tuple[float, float]:
+    def _greek_for(self, contract: OptionContract, spot: float, now: datetime) -> tuple[float, float, float]:
         t = year_fraction(contract.expiry, now)
         iv = self._s.sim_base_iv + 0.04 * abs(contract.strike - spot) / spot  # simple smile
         gamma = bs_gamma(spot, contract.strike, t, self._s.risk_free_rate, iv)
-        return gamma, iv
+        delta = bs_delta(
+            spot, contract.strike, t, self._s.risk_free_rate, iv, contract.right is OptionRight.CALL
+        )
+        return gamma, delta, iv
 
     def _emit_all(self) -> None:
         now = utcnow()
@@ -124,8 +127,10 @@ class SimulatedProvider(MarketDataProvider):
                 ask=self._spot + 0.10,
             )
         )
+        es = self._spot + self._s.sim_es_basis
+        self._sink.on_quote(UnderlyingQuote(symbol="ES", ts=now, last=es, bid=es - 0.125, ask=es + 0.125))
         for contract in self._contracts:
-            gamma, iv = self._greek_for(contract, self._spot, now)
+            gamma, delta, iv = self._greek_for(contract, self._spot, now)
             self._sink.on_greeks(
                 GreeksUpdate(
                     con_id=contract.con_id,
@@ -133,6 +138,7 @@ class SimulatedProvider(MarketDataProvider):
                     basis=GreeksBasis.MODEL,
                     source=DataSource.STREAM,
                     iv=iv,
+                    delta=delta,
                     gamma=gamma,
                     und_price=self._spot,
                 )

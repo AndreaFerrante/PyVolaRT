@@ -26,6 +26,7 @@ class EngineInputs:
     contracts: dict[int, OptionContract] = field(default_factory=dict)
     greeks: dict[int, GreeksUpdate] = field(default_factory=dict)
     oi: dict[int, int] = field(default_factory=dict)
+    es_spot: float | None = None  # fresh ES future price, or None
 
 
 def _dollar_gamma(gamma: float, oi: int, multiplier: int, spot: float) -> float:
@@ -56,6 +57,7 @@ class GexEngine:
 
         acc: dict[float, _StrikeAcc] = {}
         expiries: set[date] = set()
+        net_dex = 0.0
 
         for con_id, contract in inputs.contracts.items():
             strike_acc = acc.setdefault(contract.strike, _StrikeAcc())
@@ -63,6 +65,8 @@ class GexEngine:
 
             g = inputs.greeks.get(con_id)
             o = inputs.oi.get(con_id)
+            if g is not None and g.delta is not None and o is not None:
+                net_dex += g.delta * o * contract.multiplier * spot
             if g is None or g.gamma is None or o is None:
                 continue  # unusable leg; still counted in total_legs for quality
 
@@ -115,6 +119,8 @@ class GexEngine:
             call_gex_total=call_total,
             put_gex_total=put_total,
             gex_ratio=ratio,
+            net_dex=net_dex,
+            es_basis=(inputs.es_spot - spot) if inputs.es_spot is not None else None,
             call_oi_total=call_oi_total,
             put_oi_total=put_oi_total,
             total_oi=call_oi_total + put_oi_total,

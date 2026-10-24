@@ -1,10 +1,12 @@
 import { MetricCard, type MetricAccent } from "./MetricCard";
 import type { GexSnapshot } from "@/types/api";
 import {
+  fmtEsLevel,
   fmtOi,
   fmtPrice,
   fmtRatio,
   fmtSignedPct,
+  fmtSignedPts,
   fmtStrike,
   fmtUsdCompact,
 } from "@/utils/format";
@@ -15,7 +17,7 @@ interface MetricsStripProps {
 }
 
 export function MetricsStrip({ snapshot }: MetricsStripProps) {
-  const { levels } = snapshot;
+  const { levels, es_basis } = snapshot;
   const netAccent: MetricAccent = snapshot.net_gex >= 0 ? "up" : "down";
 
   return (
@@ -31,6 +33,12 @@ export function MetricsStrip({ snapshot }: MetricsStripProps) {
         value={fmtUsdCompact(snapshot.net_gex)}
         sub={`Ratio: ${fmtRatio(snapshot.gex_ratio)}`}
         accent={netAccent}
+      />
+      <MetricCard
+        title="Net DEX"
+        value={fmtUsdCompact(snapshot.net_dex)}
+        sub="Delta of OI"
+        accent={snapshot.net_dex >= 0 ? "up" : "down"}
       />
       <MetricCard
         title="Call GEX"
@@ -66,6 +74,12 @@ export function MetricsStrip({ snapshot }: MetricsStripProps) {
         title="Zero Gamma"
         value={fmtStrike(levels.zero_gamma)}
         accent="neutral"
+      />
+      <MetricCard
+        title="ES Basis"
+        value={fmtSignedPts(es_basis)}
+        sub={`ES  CW ${fmtEsLevel(levels.call_wall, es_basis)} · PW ${fmtEsLevel(levels.put_wall, es_basis)} · ZG ${fmtEsLevel(levels.zero_gamma, es_basis)}`}
+        accent="info"
       />
     </section>
   );

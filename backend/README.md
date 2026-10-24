@@ -10,6 +10,9 @@ decisions behind this layout.
 
 ## Quick start
 
+From the repo root, `./start.sh` (simulated) or `./start.sh ibkr` sets up the venv,
+installs dependencies, and starts backend + frontend. Manual steps:
+
 ```bash
 cd backend
 python -m venv .venv && source .venv/bin/activate

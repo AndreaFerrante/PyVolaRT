@@ -13,7 +13,7 @@ from app.core.models.contracts import OptionContract, OptionRight
 from app.core.models.gex import Regime
 from app.core.models.market import DataSource, GreeksBasis, GreeksUpdate
 from app.core.models.quality import DataQuality, FeedStatus
-from app.services.gex.black_scholes import bs_gamma, year_fraction
+from app.services.gex.black_scholes import bs_delta, bs_gamma, year_fraction
 from app.services.gex.engine import EngineInputs, GexEngine
 from app.services.gex.flip import compute_flip_curve
 from app.services.state import MarketState
@@ -112,3 +112,67 @@ def test_ibkr_await_spot_raises_instead_of_guessing():
     assert asyncio.run(provider._await_spot(_Ticker(6712.5), timeout=0.5)) == 6712.5
     with pytest.raises(RuntimeError, match="no SPX price"):
         asyncio.run(provider._await_spot(_Ticker(float("nan")), timeout=0.3))
+
+
+def test_ibkr_discover_picks_spxw_front_and_skips_unlisted():
+    pytest.importorskip("ib_async")
+    from types import SimpleNamespace as NS
+    from app.services.providers.ibkr import IBKRProvider
+
+    strikes = [5995.0, 6000.0, 6005.0]
+    chains = [  # monthly chain listed first: the old code picked it
+        NS(exchange="SMART", tradingClass="SPX", expirations=["20261120"], strikes=strikes),
+        NS(exchange="SMART", tradingClass="SPXW", expirations=["20261020", "20261019"], strikes=strikes),
+    ]
+
+    class _FakeIB:
+        async def reqSecDefOptParamsAsync(self, *_):
+            return chains
+
+        async def qualifyContractsAsync(self, *opts):
+            for i, o in enumerate(opts, 1):
+                o.conId, o.multiplier = i, "100"
+            return [None if o.strike == 6005.0 else o for o in opts]  # 6005 unlisted
+
+    provider = IBKRProvider(Settings(ntm_strikes_each_side=1), MarketState("SPX"))
+    provider._ib = _FakeIB()
+    got = asyncio.run(provider._discover_ntm(NS(symbol="SPX", secType="IND", conId=1), 6001.0))
+    assert {c.trading_class for c, _ in got} == {"SPXW"}
+    assert {c.expiry for c, _ in got} == {date(2026, 10, 19)}
+    assert sorted(c.strike for c, _ in got) == [5995.0, 5995.0, 6000.0, 6000.0]
+
+
+def test_net_dex_natural_delta_sign():
+    inputs = _inputs()
+    deltas = {1: -0.1, 2: -0.4, 3: 0.4, 4: 0.3}
+    inputs.greeks = {k: g.model_copy(update={"delta": deltas[k]}) for k, g in inputs.greeks.items()}
+    snap = GexEngine().compute(
+        inputs, quality=DataQuality(status=FeedStatus.LIVE, t1_coverage=1.0), zero_gamma=None
+    )
+    # -0.1*5000 - 0.4*2000 + 0.4*2000 + 0.3*5000 = 1000 delta-contracts
+    assert snap.net_dex == pytest.approx(1000 * 100 * SPOT)
+
+
+def test_es_basis_fresh_and_stale():
+    from app.core.models.market import UnderlyingQuote
+
+    state = MarketState("SPX")
+    state.on_quote(UnderlyingQuote(symbol="SPX", ts=NOW, bid=5999.9, ask=6000.1))
+    state.on_quote(UnderlyingQuote(symbol="ES", ts=NOW, bid=6035.0, ask=6035.5))
+    assert state.resolved_spot() == pytest.approx(6000.0)  # ES must not overwrite spot
+
+    fresh = state.snapshot_inputs(NOW + timedelta(seconds=5), 0.04, es_max_age_s=10)
+    stale = state.snapshot_inputs(NOW + timedelta(seconds=30), 0.04, es_max_age_s=10)
+    quality = DataQuality(status=FeedStatus.LIVE, t1_coverage=1.0)
+    for inputs in (fresh, stale):
+        base = _inputs()
+        inputs.contracts, inputs.greeks, inputs.oi = base.contracts, base.greeks, base.oi
+    assert GexEngine().compute(fresh, quality, None).es_basis == pytest.approx(35.25)
+    assert GexEngine().compute(stale, quality, None).es_basis is None
+
+
+def test_bs_delta_put_call_parity():
+    t = year_fraction(EXPIRY, NOW)
+    call = bs_delta(SPOT, 6050.0, t, 0.04, IV, is_call=True)
+    put = bs_delta(SPOT, 6050.0, t, 0.04, IV, is_call=False)
+    assert 0 < call < 1 and call - put == pytest.approx(1.0)

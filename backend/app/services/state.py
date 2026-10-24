@@ -22,6 +22,7 @@ class MarketState:
         self._oi: dict[int, int] = {}
         self._oi_session_date: date | None = None
         self._quote: UnderlyingQuote | None = None
+        self._es_quote: UnderlyingQuote | None = None
         self._dirty = False
 
     # --- MarketSink surface ------------------------------------------------
@@ -33,7 +34,10 @@ class MarketState:
         self._dirty = True
 
     def on_quote(self, quote: UnderlyingQuote) -> None:
-        self._quote = quote
+        if quote.symbol == self.underlying:
+            self._quote = quote
+        else:
+            self._es_quote = quote  # the only other quote providers emit: the ES future
         self._dirty = True
 
     def on_oi(self, record: OpenInterestRecord) -> None:
@@ -49,6 +53,12 @@ class MarketState:
 
     def resolved_spot(self) -> float | None:
         return self._quote.spot if self._quote else None
+
+    def es_spot(self, now: datetime, max_age_s: float) -> float | None:
+        q = self._es_quote
+        if q is None or (now - q.ts).total_seconds() > max_age_s:
+            return None  # a stale ES against a fresh SPX gives a wrong basis
+        return q.spot
 
     def spot_age_s(self, now: datetime) -> float | None:
         if self._quote is None:
@@ -68,11 +78,12 @@ class MarketState:
             if g.gamma is not None and (now - g.ts).total_seconds() <= max_age_s
         )
 
-    def snapshot_inputs(self, now: datetime, rate: float) -> EngineInputs:
+    def snapshot_inputs(self, now: datetime, rate: float, es_max_age_s: float) -> EngineInputs:
         """Consistent copy of inputs for one compute cycle."""
         return EngineInputs(
             underlying=self.underlying,
             spot=self.resolved_spot(),
+            es_spot=self.es_spot(now, es_max_age_s),
             now=now,
             rate=rate,
             contracts=dict(self._contracts),

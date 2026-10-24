@@ -54,6 +54,10 @@ class GexSnapshot(BaseModel):
     call_gex_total: float   # >= 0
     put_gex_total: float    # <= 0
     gex_ratio: float | None = None  # call_total / |put_total|
+    # USD delta of open interest: sum(delta * OI * multiplier * spot). Natural delta
+    # sign (calls +, puts -), NOT dealer-signed; legs without broker delta are skipped.
+    net_dex: float = 0.0
+    es_basis: float | None = None  # ES price - SPX spot, in points; None if no fresh ES quote
 
     call_oi_total: int
     put_oi_total: int
